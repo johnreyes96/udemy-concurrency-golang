@@ -23,6 +23,7 @@ func randomDuration() time.Duration {
 	return time.Duration(rand.Int63n(1e9))
 }
 
+// go build -race main.go => .\main
 //----------------------------------------------------
 // (main goroutine) -> t <- (time.AfterFunc goroutine)
 //----------------------------------------------------
