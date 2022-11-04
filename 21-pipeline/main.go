@@ -37,11 +37,7 @@ func main() {
 	// run the last stage of pipeline
 	// receive the values from square stage
 	// print each one, until channel is closed.
-	ch := generator(2, 3)
-
-	out := square(ch)
-
-	for n := range out {
+	for n := range square(square(generator(2, 3))) {
 		fmt.Println(n)
 	}
 }
