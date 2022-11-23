@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/disintegration/imaging"
@@ -16,14 +17,23 @@ import (
 // Input - directory with images.
 // output - thumbnail images
 
-// walkfiles --> process image --> save image
+// Pipeline
+// walkfiles ---------> processImage ----------> saveImage
+//            (paths)                 (results)
+
+type result struct {
+	srcImagePath   string
+	thumbnailImage *image.NRGBA
+	err            error
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		log.Fatal("need to send directory path of images")
 	}
 	start := time.Now()
 
-	err := walkFiles(os.Args[1])
+	err := setupPipeline(os.Args[1])
 
 	if err != nil {
 		log.Fatal(err)
@@ -31,63 +41,114 @@ func main() {
 	fmt.Printf("Time taken: %s\n", time.Since(start))
 }
 
-// walfiles - take diretory path as input
-// does the file walk
-// generates thumbnail images
-// saves the image to thumbnail directory.
-func walkFiles(root string) error {
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+func setupPipeline(root string) error {
+	done := make(chan struct{})
+	defer close(done)
 
-		// filter out error
-		if err != nil {
-			return err
+	// first stage pipeline
+	paths, errc := walkFiles(done, root)
+
+	// second stage pipeline
+	results := processImage(done, paths)
+
+	// third stage pipeline
+	for r := range results {
+		if r.err != nil {
+			return r.err
 		}
+		saveThumbnail(r.srcImagePath, r.thumbnailImage)
+	}
 
-		// check if it is file
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-
-		// check if it is image/jpeg
-		contentType, _ := getFileContentType(path)
-		if contentType != "image/jpeg" {
-			return nil
-		}
-
-		// process the image
-		thumbnailImage, err := processImage(path)
-		if err != nil {
-			return err
-		}
-
-		// save the thumbnail image to disk
-		err = saveThumbnail(path, thumbnailImage)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-
-	if err != nil {
+	if err := <-errc; err != nil {
 		return err
 	}
 	return nil
 }
 
+// walfiles - take diretory path as input
+// does the file walk
+// generates thumbnail images
+// saves the image to thumbnail directory.
+func walkFiles(done <-chan struct{}, root string) (<-chan string, <-chan error) {
+	paths := make(chan string)
+	errc := make(chan error, 1)
+
+	go func() {
+		defer close(paths)
+		errc <- filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+
+			// filter out error
+			if err != nil {
+				return err
+			}
+
+			// check if it is file
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+
+			// check if it is image/jpeg
+			contentType, _ := getFileContentType(path)
+			if contentType != "image/jpeg" {
+				return nil
+			}
+
+			select {
+			case paths <- path:
+			case <-done:
+				return fmt.Errorf("walk was canceled")
+			}
+
+			return nil
+		})
+	}()
+
+	return paths, errc
+}
+
 // processImage - takes image file as input
 // return pointer to thumbnail image in memory.
-func processImage(path string) (*image.NRGBA, error) {
+func processImage(done <-chan struct{}, paths <-chan string) <-chan *result {
+	results := make(chan *result)
 
-	// load the image from file
-	srcImage, err := imaging.Open(path)
-	if err != nil {
-		return nil, err
+	thumbnailer := func() {
+		for path := range paths {
+			// load the image from file
+			srcImage, err := imaging.Open(path)
+			if err != nil {
+				select {
+				case results <- &result{path, nil, err}:
+				case <-done:
+					return
+				}
+			}
+
+			// scale the image to 100px * 100px
+			thumbnailImage := imaging.Thumbnail(srcImage, 100, 100, imaging.Lanczos)
+			select {
+			case results <- &result{path, thumbnailImage, nil}:
+			case <-done:
+				return
+			}
+		}
 	}
 
-	// scale the image to 100px * 100px
-	thumbnailImage := imaging.Thumbnail(srcImage, 100, 100, imaging.Lanczos)
+	const numThumbnailer = 5
+	var wg sync.WaitGroup
 
-	return thumbnailImage, nil
+	wg.Add(numThumbnailer)
+	for i := 0; i < numThumbnailer; i++ {
+		go func() {
+			thumbnailer()
+			wg.Done()
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	return results
 }
 
 // saveThumbnail - save the thumnail image to folder
@@ -98,6 +159,7 @@ func saveThumbnail(srcImagePath string, thumbnailImage *image.NRGBA) error {
 	// save the image in the thumbnail folder.
 	err := imaging.Save(thumbnailImage, dstImagePath)
 	if err != nil {
+		fmt.Printf("Error al guardar la imagen: %v", err.Error())
 		return err
 	}
 	fmt.Printf("%s -> %s\n", srcImagePath, dstImagePath)
