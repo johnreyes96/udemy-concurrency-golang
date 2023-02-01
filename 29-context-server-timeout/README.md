@@ -15,3 +15,5 @@
     - CREATE USER alice WITH ENCRYPTED PASSWORD 'pa$$word';
     
     - GRANT ALL PRIVILEGES ON DATABASE wonderland TO alice;
+
+7. Run project: time curl -i localhost:8000
