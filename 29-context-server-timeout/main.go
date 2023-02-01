@@ -32,18 +32,18 @@ func slowHandler(w http.ResponseWriter, req *http.Request) {
 func main() {
 	var err error
 
-	connstr := "host=localhost port=5432 user=postgres password=admin1234  dbname=currencygo sslmode=disable"
+	connstr := "host=localhost port=5432 user=alice password=pa$$word dbname=wonderland sslmode=disable"
 
 	db, err = sql.Open("postgres", connstr)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(fmt.Sprintf("Error al abrir conexión con la db: %v", err))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err = db.PingContext(ctx); err != nil {
-		log.Fatal(err)
+		log.Fatal(fmt.Sprintf("Error al hacer ping a la db: %v", err))
 	}
 
 	srv := http.Server{
