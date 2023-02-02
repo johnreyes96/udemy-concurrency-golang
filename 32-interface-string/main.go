@@ -7,7 +7,10 @@ type user struct {
 	email string
 }
 
-// TODO: Implement custom formating for user struct values.
+// Implement custom formating for user struct values.
+func (u user) String() string {
+	return fmt.Sprintf("%s <%s>", u.name, u.email)
+}
 
 func main() {
 	u := user{
